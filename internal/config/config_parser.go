@@ -1,12 +1,12 @@
-package main
+package config
 
 import (
 	"errors"
 	"regexp"
 	"strings"
 
-	"github.com/golang/glog"
 	yaml "gopkg.in/yaml.v2"
+	"k8s.io/klog/v2"
 )
 
 type Config map[string]interface{}
@@ -15,7 +15,7 @@ type Parser interface {
 	parse(filename string) (map[string]interface{}, error)
 }
 
-func parseConfig(filename string) (map[string]interface{}, error) {
+func ParseConfig(filename string) (map[string]interface{}, error) {
 	lowerFilename := strings.ToLower(filename)
 	if strings.HasSuffix(lowerFilename, ".yaml") || strings.HasSuffix(lowerFilename, ".yml") {
 		yp := &YamlParser{}
@@ -25,17 +25,17 @@ func parseConfig(filename string) (map[string]interface{}, error) {
 }
 
 // remove sensitive info before output
-func removeSensitiveInfo(config map[string]interface{}) string {
+func RemoveSensitiveInfo(config map[string]interface{}) string {
 	re := regexp.MustCompile(`(.*password:\s+)(.*)`)
 	re2 := regexp.MustCompile(`(http(s)?://\w+:)\w+`)
 
 	b, err := yaml.Marshal(config)
 	if err != nil {
-		glog.Errorf("marshal config error: %s", err)
+		klog.Errorf("marshal config error: %s", err)
 		return ""
 	}
 
-	output := make([]string, 0, 0)
+	output := make([]string, 0)
 	for _, l := range strings.Split(string(b), "\n") {
 		if re.MatchString(l) {
 			output = append(output, re.ReplaceAllString(l, "${1}xxxxxx"))

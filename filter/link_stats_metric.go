@@ -1,14 +1,13 @@
 package filter
 
 import (
-	"fmt"
 	"math"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/childe/gohangout/topology"
-	"github.com/golang/glog"
+	"k8s.io/klog/v2"
 )
 
 type stats struct {
@@ -63,7 +62,7 @@ func newLinkStatsMetricFilter(config map[interface{}]interface{}) topology.Filte
 		p.fieldsWithoutLast = p.fields[:p.fieldsLength-1]
 		p.lastField = p.fields[p.fieldsLength-1]
 	} else {
-		glog.Fatal("fieldsLink must be set in linkstatmetric filter plugin")
+		klog.Fatal("fieldsLink must be set in linkstatmetric filter plugin")
 	}
 
 	if timestamp, ok := config["timestamp"]; ok {
@@ -81,13 +80,13 @@ func newLinkStatsMetricFilter(config map[interface{}]interface{}) topology.Filte
 	if batchWindow, ok := config["batchWindow"]; ok {
 		p.batchWindow = int64(batchWindow.(int))
 	} else {
-		glog.Fatal("batchWindow must be set in linkstatmetric filter plugin")
+		klog.Fatal("batchWindow must be set in linkstatmetric filter plugin")
 	}
 
 	if reserveWindow, ok := config["reserveWindow"]; ok {
 		p.reserveWindow = int64(reserveWindow.(int))
 	} else {
-		glog.Fatal("reserveWindow must be set in linkstatmetric filter plugin")
+		klog.Fatal("reserveWindow must be set in linkstatmetric filter plugin")
 	}
 
 	if reduce, ok := config["reduce"]; ok {
@@ -102,7 +101,7 @@ func newLinkStatsMetricFilter(config map[interface{}]interface{}) topology.Filte
 		case "separate":
 			p.accumulateMode = 1
 		default:
-			glog.Errorf("invalid accumulateMode: %s. set to cumulative", accumulateMode)
+			klog.Errorf("invalid accumulateMode: %s. set to cumulative", accumulateMode)
 			p.accumulateMode = 0
 		}
 	} else {
@@ -148,7 +147,7 @@ func (f *LinkStatsMetricFilter) metricToEvents(metrics map[interface{}]interface
 	for fieldValue, nextLevelMetrics := range metrics {
 		for _, e := range f.metricToEvents(nextLevelMetrics.(map[interface{}]interface{}), level+1) {
 			event := make(map[string]interface{})
-			event[fmt.Sprintf("%s", fieldName)] = fieldValue
+			event[fieldName] = fieldValue
 			for k, v := range e {
 				event[k] = v
 			}
@@ -230,13 +229,13 @@ func (f *LinkStatsMetricFilter) updateMetric(event map[string]interface{}) {
 	var timestamp int64
 	if v, ok := event[f.timestamp]; ok {
 		if t, ok := v.(time.Time); !ok {
-			glog.V(20).Infof("timestamp is not time.Time type")
+			klog.V(20).Infof("timestamp is not time.Time type")
 			return
 		} else {
 			timestamp = t.Unix()
 		}
 	} else {
-		glog.V(20).Infof("no timestamp in event. %s", event)
+		klog.V(20).Infof("no timestamp in event. %s", event)
 		return
 	}
 

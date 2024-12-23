@@ -9,8 +9,8 @@ import (
 	"github.com/childe/gohangout/output"
 	"github.com/childe/gohangout/topology"
 	"github.com/childe/gohangout/value_render"
-	"github.com/golang/glog"
 	"github.com/prometheus/client_golang/prometheus"
+	"k8s.io/klog/v2"
 )
 
 type InputBox struct {
@@ -23,8 +23,8 @@ type InputBox struct {
 
 	promCounter prometheus.Counter
 
-	shutdownWhenNil    bool
-	mainThreadExitChan chan struct{}
+	shutdownWhenNil bool
+	exit            func()
 
 	addFields map[field_setter.FieldSetter]value_render.ValueRender
 }
@@ -35,7 +35,7 @@ func (box *InputBox) SetShutdownWhenNil(shutdownWhenNil bool) {
 	box.shutdownWhenNil = shutdownWhenNil
 }
 
-func NewInputBox(input topology.Input, inputConfig map[interface{}]interface{}, config map[string]interface{}, mainThreadExitChan chan struct{}) *InputBox {
+func NewInputBox(input topology.Input, inputConfig map[interface{}]interface{}, config map[string]interface{}, exit func()) *InputBox {
 	b := &InputBox{
 		input:        input,
 		config:       config,
@@ -44,14 +44,14 @@ func NewInputBox(input topology.Input, inputConfig map[interface{}]interface{}, 
 
 		promCounter: topology.GetPromCounter(inputConfig),
 
-		mainThreadExitChan: mainThreadExitChan,
+		exit: exit,
 	}
 	if add_fields, ok := inputConfig["add_fields"]; ok {
 		b.addFields = make(map[field_setter.FieldSetter]value_render.ValueRender)
 		for k, v := range add_fields.(map[interface{}]interface{}) {
 			fieldSetter := field_setter.NewFieldSetter(k.(string))
 			if fieldSetter == nil {
-				glog.Errorf("could build field setter from %s", k.(string))
+				klog.Errorf("could build field setter from %s", k.(string))
 				return nil
 			}
 			b.addFields[fieldSetter] = value_render.GetValueRender(v.(string))
@@ -75,13 +75,13 @@ func (box *InputBox) beat(workerIdx int) {
 			box.promCounter.Inc()
 		}
 		if event == nil {
-			glog.V(5).Info("received nil message.")
+			klog.V(5).Info("received nil message.")
 			if box.stop {
 				break
 			}
 			if box.shutdownWhenNil {
-				glog.Info("received nil message. shutdown...")
-				box.mainThreadExitChan <- struct{}{}
+				klog.Info("received nil message. shutdown...")
+				box.exit()
 				break
 			} else {
 				continue
@@ -128,6 +128,7 @@ func (box *InputBox) buildTopology(workerIdx int) *topology.ProcessorNode {
 	return firstNode
 }
 
+// Beat starts the processors and wait until shutdown
 func (box *InputBox) Beat(worker int) {
 	box.outputsInAllWorker = make([][]*topology.OutputBox, worker)
 	for i := 0; i < worker; i++ {
@@ -140,12 +141,12 @@ func (box *InputBox) Beat(worker int) {
 func (box *InputBox) shutdown() {
 	box.once.Do(func() {
 
-		glog.Infof("try to shutdown input %T", box.input)
+		klog.Infof("try to shutdown input %T", box.input)
 		box.input.Shutdown()
 
 		for i, outputs := range box.outputsInAllWorker {
 			for _, o := range outputs {
-				glog.Infof("try to shutdown output %T in worker %d", o, i)
+				klog.Infof("try to shutdown output %T in worker %d", o, i)
 				o.Output.Shutdown()
 			}
 		}
@@ -154,7 +155,8 @@ func (box *InputBox) shutdown() {
 	box.shutdownChan <- true
 }
 
+// Shutdown shutdowns the inputs and outputs
 func (box *InputBox) Shutdown() {
-	box.shutdown()
 	box.stop = true
+	box.shutdown()
 }

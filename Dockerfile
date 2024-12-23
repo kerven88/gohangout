@@ -1,10 +1,15 @@
-FROM alpine:3.15
+FROM golang:1.22.5-alpine3.20 as build
+
+RUN apk update && apk add make
+
+WORKDIR /gohangout
+COPY . .
+
+RUN make
+
+FROM alpine:3.20
 
 ARG TZ="Asia/Shanghai"
 ENV TZ ${TZ}
 
-RUN apk upgrade --update
-RUN apk --update add tzdata
-RUN ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime
-
-ADD build/gohangout /usr/local/bin/gohangout
+COPY --from=build /gohangout/gohangout /usr/local/bin/
