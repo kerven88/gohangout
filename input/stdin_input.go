@@ -3,11 +3,12 @@ package input
 import (
 	"bufio"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/childe/gohangout/codec"
 	"github.com/childe/gohangout/topology"
-	"github.com/golang/glog"
+	"k8s.io/klog/v2"
 )
 
 type StdinInput struct {
@@ -15,7 +16,7 @@ type StdinInput struct {
 	decoder codec.Decoder
 
 	scanner  *bufio.Scanner
-	messages chan []byte
+	scanLock sync.Mutex
 
 	stop bool
 }
@@ -30,17 +31,18 @@ func newStdinInput(config map[interface{}]interface{}) topology.Input {
 		codertype = v.(string)
 	}
 	p := &StdinInput{
-
-		config:   config,
-		decoder:  codec.NewDecoder(codertype),
-		scanner:  bufio.NewScanner(os.Stdin),
-		messages: make(chan []byte, 10),
+		config:  config,
+		decoder: codec.NewDecoder(codertype),
+		scanner: bufio.NewScanner(os.Stdin),
 	}
 
 	return p
 }
 
 func (p *StdinInput) ReadOneEvent() map[string]interface{} {
+	p.scanLock.Lock()
+	defer p.scanLock.Unlock()
+
 	if p.scanner.Scan() {
 		t := p.scanner.Bytes()
 		msg := make([]byte, len(t))
@@ -48,9 +50,11 @@ func (p *StdinInput) ReadOneEvent() map[string]interface{} {
 		return p.decoder.Decode(msg)
 	}
 	if err := p.scanner.Err(); err != nil {
-		glog.Errorf("stdin scan error: %v", err)
+		klog.Errorf("stdin scan error: %v", err)
+	} else {
+		// EOF here. when stdin is closed by C-D, cpu will raise up to 100% if not sleep
+		time.Sleep(time.Millisecond * 1000)
 	}
-	time.Sleep(time.Millisecond * 100)
 	return nil
 }
 

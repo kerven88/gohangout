@@ -22,6 +22,10 @@
 
   > go get github.com/childe/gohangout
 
+### docker
+
+镜像地址 https://hub.docker.com/repository/docker/rmself/gohangout/general
+
 ### 第三方 Plugin
 
 使用 Plugin 的话，自己编译一下，将 CGO_ENABLED 打开：`CGO_ENABLED=1`
@@ -34,6 +38,7 @@
 - [Split Filter](https://github.com/childe/gohangout-plugin-examples/tree/master/gohangout-filter-split) 一条消息Split 成多条
 - [File Output](https://github.com/childe/gohangout-plugin-examples/tree/master/gohangout-file-output) 输出到文件
 - [zinc Output](https://github.com/9ji/gohangout-output-zinc) 输出到[zinc](https://github.com/prabhatsharma/zinc)
+- [pulasr input](https://github.com/zcola/gohangout-input-pulsar)
 
 
 ## 运行
@@ -52,7 +57,7 @@ outputs:
 
 ### 日志
 
-日志模块使用 github.com/golang/glog , 几个常用参数如下:
+日志模块使用 k8s.io/klog/v2 , 几个常用参数如下:
 
 - -logtostderr
 日志打印出标准错误
@@ -76,12 +81,14 @@ pprof 的http地址
 
 如下例子表示，如果数据通过 if 条件，则此 Add Filter 的计数加 1。
 
+注意，多个 counter 使用同样的配置可能会 Panic
+
 ```
 Add:
     prometheus_counter: 
-        name: gohangout_dot_output
+        name: gohangout_add_filter
         namespace: rack_a
-        help: 'rack_a gohangout dot output counter'
+        help: 'rack_a gohangout add filter counter'
         constLabels:
             env: prod
     if:
@@ -94,15 +101,17 @@ Add:
 
 默认是一个线程
 
---worker 4
+--worker 1
 
-使用四个线程(goroutine)处理数据. 每个线程拥有自己的filter, output. 比如说translate filter, 每个线程有自己的字典, 他们占用多份内存.  elasticsearch output也是一样的, 如果每个 elasticsearch 设置了2并发, 那一共就是8个并发.
+使用一个线程(goroutine)处理数据. 每个线程拥有自己的filter, output. 比如说translate filter, 每个线程有自己的字典, 他们占用多份内存.  elasticsearch output也是一样的, 如果每个 elasticsearch 设置了2并发, 那一共就是8个并发.
 
 进一步说明一下为什么添加了这个配置:
 
-最开始是没有这个配置的, 如果需要多线程并发处理数据, 依赖 Input 里面的配置, 比如说 Kafka 配置 `topicname: 2` 就是两个线程去消费(需要 Topic 有至少2个Partition, 保证每个线程可以消费到一个 Partition 里面的数据).
+如果一个 Kafka Topic 只有一个分区，那最多只有能有一个 Gohanout 去消费。因为后续的数据处理流程都在一个线程中，可能会有 CPU 瓶颈（比如 Grok 正则匹配等），这种情况下，可以通过增加 worker 提升数据处理能力。
 
-但是后面出现一些矛盾, 比如说, Kafka 的 Consumer 个数多的情况下, 给 Kafka 带来更大压力, 可能导致 Rebalance 更频繁等. 所以如果 Kafka 消费数据没有瓶颈的情况下, 希望控制尽量少的 Consumer, 后面多线程的处理这些数据.
+**注意，Kakfa 里面 topic:2 并不会开两个线程去处理数据，它只是 2 个线程去Kafka中取数据。**
+
+在 k8s 环境下，建议将 worker 配置成 CPU limit 值。
 
 ### 自动更新配置
 
@@ -307,9 +316,10 @@ Kafka:
         from.beginning: 'true'
         messages_queue_length: 10
 
-        # sasl.mechanism: PLAIN
-        # sasl.user: admin
-        # sasl.password: admin-secret
+        # sasl:
+        #     mechanism: PLAIN
+        #     user: admin
+        #     password: admin-secret
 
         # tls.enabled: true
         # tls:
@@ -328,10 +338,12 @@ Kafka:
 默认为 false
 配置为 true 的话, 可以把 topic/partition/offset 信息添加到 ["@metadata"]["kafka"] 字段中
 
+增加如下三个字段：topic partition offset
+
 
 #### topic
 
-`weblog: 1` 是指开一个goroutine去消费 weblog 这个topic. 可以配置多个topic, 多个goroutine, 但我这边在实践中都是使用多进程(docker), 而不是多goroutine.
+`weblog: 1` 是指开一个goroutine去消费 weblog 这个topic. 这里设置成2，是开 2 个线程去消费数据，但后面Filter和Output的处理还是一个线程中。**如果需要多线程处理数据，可以使用 `--worker` 参数。**
 
 #### assign
 
@@ -499,10 +511,13 @@ Kafka:
         bootstrap.servers: node1.kafka.corp.com:9092,node2.kafka.corp.com:9092,node3.kafka.corp.com:9092
         flush.interval.ms: "3000"
         metadata.max.age.ms: "10000"
+        # healer.magicbyte: "1"
         # sasl.mechanism: PLAIN
         # sasl.user: admin
         # sasl.password: admin-secret
 ```
+
+healer.magicbyte: "1" 是说写入的Kafka消息以版本1编码，默认是版本0. 版本1会在消息中加入时间戳信息。
 
 ### clickhouse
 
@@ -516,6 +531,7 @@ Clickhouse:
     - 'tcp://10.100.0.101:9000'
     - 'tcp://10.100.0.102:9000'
     # fields: ['datetime', 'appid', 'c_ip', 'domain', 'cs_method', 'cs_uri', 's_ip', 'sc_status', 'time_taken']
+    auto_convert: false
     bulk_actions: 1000
     flush_interval: 30
     concurrent: 1
@@ -533,9 +549,15 @@ clickhouse 节点列表. 必须配置
 
 #### fields
 
-初始化的时候会从 ClickHouse 里面读取所有字段。
+初始化的时候会从 Clickhouse 里面读取所有字段。
 
 也可以手工配置，会优先使用手工配置。 为了暂时缓解 #159
+
+#### auto_convert
+
+默认是 true。
+
+解决 [https://github.com/childe/gohangout/issues/208](https://github.com/childe/gohangout/issues/208) 这个问题。如果用户配置了多个Clickhouse Output，对一个 event 做字段类型转换可能会导致 concurrent map writes。这种情况（多个 Clickhouse Output）下，用户需要自己使用 Convert Filter 对字段做类型转换，并禁用 Clickhouse Output 里面的自动类型转换。
 
 #### bulk_actions
 
@@ -551,7 +573,7 @@ bulk 的goroutine 最大值, 默认1
 
 #### conn_max_life_time
 
-到 ClickHouse 的连接的生存时间, 单位为秒. 默认不设置, 也就是生存时间无限长.
+到 Clickhouse 的连接的生存时间, 单位为秒. 默认不设置, 也就是生存时间无限长.
 
 ## FILTER
 
@@ -911,6 +933,8 @@ KV:
 Json:
     field: request
     target: request_fields
+    include: ["client", "host"]
+    exclude: ["request", "user_agent"]
 ```
 
 #### field
@@ -920,6 +944,14 @@ Json:
 #### target
 
 目标字段, 如果不设置, 则将Json Filter生成的所有字段写入到根一层.
+
+#### include
+
+只使用 include 中配置的字段，其他字段丢弃。优先级高于 exclude
+
+#### exclude
+
+exclude 中的字段不要。优先级低于 include
 
 ### LinkMetric
 
@@ -1018,6 +1050,8 @@ Rename:
     host: hostname
     serverIP: server_ip
 ```
+
+将 host 字段改名为 hostname, 将 serverIP 字段改名为 server_ip
 
 
 ### Split
@@ -1123,3 +1157,5 @@ Uppercase:
 ```
 
 使用 [https://pkg.go.dev/regexp#Regexp.ReplaceAll](https://pkg.go.dev/regexp#Regexp.ReplaceAll) 做替换。
+
+配置中 `$` 符号会被环境变量渲染掉，解决方案可以参考 [https://github.com/childe/gohangout/issues/258](https://github.com/childe/gohangout/issues/258)

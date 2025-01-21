@@ -6,9 +6,9 @@ import (
 
 	"github.com/childe/gohangout/topology"
 	"github.com/childe/gohangout/value_render"
-	"github.com/golang/glog"
 	datx "github.com/ipipdotnet/datx-go"
 	ipdb "github.com/ipipdotnet/ipdb-go"
+	"k8s.io/klog/v2"
 )
 
 type IPIPFilter struct {
@@ -22,6 +22,8 @@ type IPIPFilter struct {
 	city      unsafe.Pointer
 	overwrite bool
 }
+
+const bitSize int = 64
 
 func init() {
 	Register("IPIP", newIPIPFilter)
@@ -60,17 +62,17 @@ func newIPIPFilter(config map[interface{}]interface{}) topology.Filter {
 			plugin.city = unsafe.Pointer(c2)
 		}
 		if err != nil {
-			glog.Fatalf("could not load %s: %s", plugin.database, err)
+			klog.Fatalf("could not load %s: %s", plugin.database, err)
 		}
 	} else {
-		glog.Fatal("database must be set in IPIP filter plugin")
+		klog.Fatal("database must be set in IPIP filter plugin")
 	}
 
 	if src, ok := config["src"]; ok {
 		plugin.src = src.(string)
 		plugin.srcVR = value_render.GetValueRender2(plugin.src)
 	} else {
-		glog.Fatal("src must be set in IPIP filter plugin")
+		klog.Fatal("src must be set in IPIP filter plugin")
 	}
 
 	if target, ok := config["target"]; ok {
@@ -94,7 +96,7 @@ func (plugin *IPIPFilter) Filter(event map[string]interface{}) (map[string]inter
 		a, err = city.Find(inputI.(string), plugin.language)
 	}
 	if err != nil {
-		glog.V(10).Infof("failed to find %s: %s", inputI.(string), err)
+		klog.V(10).Infof("failed to find %s: %s", inputI.(string), err)
 		return event, false
 	}
 	if plugin.target == "" {
@@ -105,8 +107,8 @@ func (plugin *IPIPFilter) Filter(event map[string]interface{}) (map[string]inter
 			event["isp"] = a[4]
 		}
 		if len(a) >= 10 {
-			latitude, _ := strconv.ParseFloat(a[5], 10)
-			longitude, _ := strconv.ParseFloat(a[6], 10)
+			latitude, _ := strconv.ParseFloat(a[5], bitSize)
+			longitude, _ := strconv.ParseFloat(a[6], bitSize)
 			event["latitude"] = latitude
 			event["longitude"] = longitude
 			event["location"] = []interface{}{longitude, latitude}
@@ -121,8 +123,8 @@ func (plugin *IPIPFilter) Filter(event map[string]interface{}) (map[string]inter
 			target["isp"] = a[4]
 		}
 		if len(a) >= 10 {
-			latitude, _ := strconv.ParseFloat(a[5], 10)
-			longitude, _ := strconv.ParseFloat(a[6], 10)
+			latitude, _ := strconv.ParseFloat(a[5], bitSize)
+			longitude, _ := strconv.ParseFloat(a[6], bitSize)
 			target["latitude"] = latitude
 			target["longitude"] = longitude
 			target["location"] = []interface{}{longitude, latitude}
